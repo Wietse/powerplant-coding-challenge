@@ -96,7 +96,7 @@ def distribute_load(config):
             break
         else:
             reset_allocation(powerplants)
-    if not math.isclose(allocated, load):
+    if not math.isclose(total_allocated, load):
         raise Exception('Unable to distribute load')
 
     return [{'name': pname(plant), 'p': production(plant)} for plant in powerplants.values()]

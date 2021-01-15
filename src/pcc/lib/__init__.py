@@ -45,23 +45,6 @@ class Plant:
                 self.cost = 10**10
 
 
-def allocate_load_old(load, load_plan, powerplants, merit_order, fill_factor=1.0):
-    remaining = load
-    for plant_id in merit_order:
-        plant = powerplants[plant_id]
-        current_allocated_load = load_plan[plant_id]
-        quote = 0.0
-        if load:
-            pmax = round((plant.pmax - current_allocated_load) * fill_factor, 1)
-            if plant.pmin - current_allocated_load <= remaining:
-                quote = min(remaining, pmax)
-            else:
-                quote = 0
-        load_plan[plant_id] += quote
-        remaining -= quote
-    return load - remaining
-
-
 def allocate_load(load, load_plan, powerplants, merit_order):
     remaining = load
     for i, plant_id in enumerate(merit_order):

@@ -1,19 +1,11 @@
 import logging
-from operator import itemgetter
+from operator import attrgetter
+from dataclasses import dataclass, InitVar
 import math
 
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
-
-
-# A few "shortcuts"
-pname = itemgetter('name')
-ptype = itemgetter('type')
-peffciency = itemgetter('efficiency')
-ppmin = itemgetter('pmin')
-ppmax = itemgetter('pmax')
-production = itemgetter('p')
 
 
 fuel_key = {
@@ -24,45 +16,57 @@ fuel_key = {
 }
 
 
-def cost(powerplant, fuels):
-    plant_type = ptype(powerplant)
-    if plant_type == 'windturbine':
-        return 0
-    factor = fuels[fuel_key[plant_type]]
-    efficiency = peffciency(powerplant)
-    if efficiency:
-        return factor / efficiency
-    # TODO: efficieny == 0 is an error in the input?
-    # return an arbitrary "large cost" for now.
-    return 10**10
+@dataclass
+class Plant:
+    name: str
+    type: str
+    efficiency: float = 1.0
+    pmin: float = 0.0
+    pmax: float = 0.0
+    cost: float = 0.0
+    fuels: InitVar = None
+
+    def __post_init__(self, fuels):
+        # calculate the cost
+        # adjust pmax for wind availability
+        factor = fuels[fuel_key[self.type]]
+        if self.type == 'windturbine':
+            self.cost = 0
+            fraction = factor / 100.0
+            self.pmax = round(self.pmax * fraction, 1)
+        else:
+            if self.efficiency > 0:
+                self.cost = factor / self.efficiency
+            else:
+                # TODO: efficieny <= 0 is an error in the input?
+                # simply exclude this plant for now
+                self.pmin = 0.0
+                self.pmax = 0.0
+                self.cost = 10**10
 
 
-def reset_allocation(powerplants):
-    for plant in powerplants.values():
-        plant['p'] = 0.0
-
-
-def allocate_load(load, fuels, powerplants, merit_order, fill_factor):
-    allocated = 0.0
-    for _, plant_id in merit_order:
+def allocate_load(load, load_plan, powerplants, merit_order, fill_factor=1.0):
+    remaining = load
+    for plant_id in merit_order:
         plant = powerplants[plant_id]
-        current_allocated_load = plant.setdefault('p', 0)
+        current_allocated_load = load_plan[plant_id]
         quote = 0.0
         if load:
-            if ptype(plant) == 'windturbine':
-                fraction = fuels[fuel_key['windturbine']] / 100.0
-            else:
-                fraction = 1
-            pmin = round(ppmin(plant) * fraction - current_allocated_load, 1)  # can be < 0!
-            pmax = round((ppmax(plant) * fraction - current_allocated_load) * fill_factor, 1)
-            if pmin <= load:
-                quote = min(load, pmax)
+            pmax = round((plant.pmax - current_allocated_load) * fill_factor, 1)
+            if plant.pmin - current_allocated_load <= remaining:
+                quote = min(remaining, pmax)
             else:
                 quote = 0
-        plant['p'] += quote
-        load -= quote
-        allocated += quote
-    return allocated
+        load_plan[plant_id] += quote
+        remaining -= quote
+    return load - remaining
+
+
+def prepare_input(config):
+    fuels = config['fuels']
+    plants = {d['name']: Plant(**d, fuels=fuels) for d in config['powerplants']}
+    merit_order = [p.name for p in sorted(plants.values(), key=attrgetter('cost'))]
+    return config['load'], plants, merit_order
 
 
 def distribute_load(config):
@@ -77,26 +81,23 @@ def distribute_load(config):
         { 'name': 'tj2', 'p': 0 }
     ]
     """
-    load = config['load']
-    logger.debug('distribute_load: load=%s', load)
-    fuels = config['fuels']
-    powerplants = {pname(plant): plant for plant in config['powerplants']}
-    merit_order = sorted((cost(plant, fuels), pname(plant)) for plant in powerplants.values())
-    logger.debug('distribute_load: merit_order=%s', merit_order)
+    load, plants, merit_order = prepare_input(config)
+    logger.debug('distribute_load: load=%s\nmerit_order=%s\nplants=%s', load, merit_order, plants)
+    load_plan = {name: 0.0 for name in plants}
     total_allocated = 0.0
     for c in range(100, 0, -10):
         fill_factor = c / 100.0
-        allocated = allocate_load(load, fuels, powerplants, merit_order, fill_factor)
+        allocated = allocate_load(load, load_plan, plants, merit_order, fill_factor)
         total_allocated = allocated
         if not math.isclose(total_allocated, load):
-            allocated = allocate_load(load - total_allocated, fuels, powerplants, merit_order, 1.0)
+            allocated = allocate_load(load - total_allocated, load_plan, plants, merit_order, 1.0)
             total_allocated += allocated
         if math.isclose(total_allocated, load):
             logger.debug('distribute_load: succeeded with fill_factor=%s', fill_factor)
             break
         else:
-            reset_allocation(powerplants)
+            load_plan = {name: 0.0 for name in plants}
     if not math.isclose(total_allocated, load):
         raise Exception('Unable to distribute load')
 
-    return [{'name': pname(plant), 'p': production(plant)} for plant in powerplants.values()]
+    return [{'name': name, 'p': p} for name, p in load_plan.items()]

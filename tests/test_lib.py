@@ -124,9 +124,9 @@ def test_payload2():
         ]
     }
     expected = [
-        {"name": "gasfiredbig1", "p": 414.0},
-        {"name": "gasfiredbig2", "p": 0.0},
-        {"name": "gasfiredsomewhatsmaller", "p": 66.0},
+        {"name": "gasfiredbig1", "p": 380.0},
+        {"name": "gasfiredbig2", "p": 100.0},
+        {"name": "gasfiredsomewhatsmaller", "p": 0.0},
         {"name": "tj1", "p": 0.0},
         {"name": "windpark1", "p": 0.0},
         {"name": "windpark2", "p": 0.0}

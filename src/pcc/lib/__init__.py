@@ -45,7 +45,7 @@ class Plant:
                 self.cost = 10**10
 
 
-def allocate_load(load, load_plan, powerplants, merit_order, fill_factor=1.0):
+def allocate_load_old(load, load_plan, powerplants, merit_order, fill_factor=1.0):
     remaining = load
     for plant_id in merit_order:
         plant = powerplants[plant_id]
@@ -59,6 +59,34 @@ def allocate_load(load, load_plan, powerplants, merit_order, fill_factor=1.0):
                 quote = 0
         load_plan[plant_id] += quote
         remaining -= quote
+    return load - remaining
+
+
+def allocate_load(load, load_plan, powerplants, merit_order):
+    remaining = load
+    for i, plant_id in enumerate(merit_order):
+        plant = powerplants[plant_id]
+        quote = 0.0
+        if plant.pmin <= remaining:
+            quote = min(remaining, plant.pmax)
+        else:
+            # redistribute: we try to take the least load from a less expensive plant to fulfill pmin
+            required_load = plant.pmin - remaining
+            j = i
+            while j > 0:
+                j -=1
+                id_ = merit_order[j]
+                prev_plant = powerplants[id_]
+                prev_allocation = load_plan[id_]
+                if prev_allocation - required_load > prev_plant.pmin:
+                    load_plan[id_] -= required_load
+                    remaining += required_load
+                    quote = plant.pmin
+                    break
+        load_plan[plant_id] += quote
+        remaining -= quote
+        if not remaining:
+            break
     return load - remaining
 
 
@@ -82,22 +110,9 @@ def distribute_load(config):
     ]
     """
     load, plants, merit_order = prepare_input(config)
-    logger.debug('distribute_load: load=%s\nmerit_order=%s\nplants=%s', load, merit_order, plants)
+    logger.debug('distribute_load: load=%s\nmerit_order=%s', load, merit_order)
     load_plan = {name: 0.0 for name in plants}
-    total_allocated = 0.0
-    for c in range(100, 0, -10):
-        fill_factor = c / 100.0
-        allocated = allocate_load(load, load_plan, plants, merit_order, fill_factor)
-        total_allocated = allocated
-        if not math.isclose(total_allocated, load):
-            allocated = allocate_load(load - total_allocated, load_plan, plants, merit_order, 1.0)
-            total_allocated += allocated
-        if math.isclose(total_allocated, load):
-            logger.debug('distribute_load: succeeded with fill_factor=%s', fill_factor)
-            break
-        else:
-            load_plan = {name: 0.0 for name in plants}
-    if not math.isclose(total_allocated, load):
-        raise Exception('Unable to distribute load')
-
+    allocated = allocate_load(load, load_plan, plants, merit_order)
+    if not math.isclose(allocated, load):
+        raise Exception('Unable to distribute load: load=%s, allocated=%s' % (load, allocated))
     return [{'name': name, 'p': p} for name, p in load_plan.items()]

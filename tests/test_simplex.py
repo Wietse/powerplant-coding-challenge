@@ -1,4 +1,4 @@
-from pcc.simplex import simplex, prepare_input
+from pcc.simplex import simplex, prepare_input, EmptyFeasibleRegionError, distribute_load
 
 
 def test1():
@@ -132,6 +132,117 @@ def test6():
     assert solution == expected
 
 
+def test7():
+    """
+    Empty problem set (i.e. no feasible region)
+
+    Minimize z = -3x1 + 4x2
+    s.t.:
+         x1 +  x2 <= 4
+        2x1 + 3x2 >= 18
+    """
+    c = [-3, 4]
+    A = [[1, 1],
+         [2, 3]]
+    b = [4, -18]
+    try:
+        simplex(c, A, b)
+    except EmptyFeasibleRegionError:
+        pass
+    else:
+        assert False, 'No exception raised'
+
+
+# def test7():
+#     """
+#     After phase I there is a redundant row in the basis for an artificial variable.
+#
+#     Minimize z = -x1 + 2x2 - 3x3
+#     s.t.:
+#          x1 + x2 +  x3 =   6
+#         -x1 + x2 + 2x3 =   4
+#              2x2 + 3x3 =  10
+#                     x3 <=  2
+#     """
+#     c = [-3, 4]
+#     A = [[1, 1],
+#          [2, 3]]
+#     b = [4, -18]
+#     try:
+#         simplex(c, A, b)
+#     except EmptyFeasibleRegionError:
+#         pass
+#     else:
+#         assert False, 'No exception raised'
+
+
+def test_small():
+    config = {
+        "load": 280,
+        "fuels":
+        {
+            "gas(euro/MWh)": 13.4,
+            "kerosine(euro/MWh)": 50.8,
+            "co2(euro/ton)": 20,
+            "wind(%)": 60
+        },
+        "powerplants": [
+            {
+            "name": "gasfiredbig1",
+            "type": "gasfired",
+            "efficiency": 0.53,
+            "pmin": 100,
+            "pmax": 460
+            },
+            {
+            "name": "gasfiredsomewhatsmaller",
+            "type": "gasfired",
+            "efficiency": 0.37,
+            "pmin": 40,
+            "pmax": 210
+            },
+        ]
+    }
+    expected = [
+        {"name": "gasfiredbig1", "p": 368.4},
+        {"name": "gasfiredsomewhatsmaller", "p": 0.0},
+    ]
+    expected = {'x_1': 100.0, 'x_2': 100.0,
+                's_1': 360.0, 's_2': 0.0, 's_3': 360.0, 's_4': 0.0, 's_5': 170.0, 's_6': 0.0,
+                'z': 0}
+
+    load, plants = prepare_input(config)
+    plant_list = [p for p in plants.values() if p.pmax > 0]
+
+    c = [p.cost for p in plant_list]
+
+    constraints = []
+    b = []
+    templ = [0 for _ in plant_list]
+    for i, p in enumerate(plant_list):
+        # p_i <= pmax_i
+        row = templ[:]
+        row[i] = 1
+        constraints.append(row)
+        b.append(p.pmax)
+        # p_i >= pmin_i
+        if p.pmin > 0:
+            row = templ[:]
+            row[i] = 1
+            constraints.append(row)
+            b.append(-p.pmin)  # indicate ">=" with "-"
+
+    # make the Sum(p_i) = load 2 inequalities
+    constraints.append([1 for _ in plant_list])
+    b.append(load)
+    constraints.append([1 for _ in plant_list])
+    b.append(-load)
+
+    solution = simplex(c, constraints, b)
+    print(solution)
+    assert solution == expected
+
+
 def test_payload1():
     config = {
         "load": 480,
@@ -188,45 +299,146 @@ def test_payload1():
         ]
     }
     expected = [
-        {"name": "gasfiredbig1", "p": 368.4},
-        {"name": "gasfiredbig2", "p": 0.0},
-        {"name": "gasfiredsomewhatsmaller", "p": 0.0},
+        {"name": "gasfiredbig1", "p": 228.4},
+        {"name": "gasfiredbig2", "p": 100.0},
+        {"name": "gasfiredsomewhatsmaller", "p": 40.0},
         {"name": "tj1", "p": 0.0},
         {"name": "windpark1", "p": 90.0},
         {"name": "windpark2", "p": 21.6}
     ]
-    expected = {'x_1': 100.0, 'x_2': 100.0, 'x_3': 40.0, 'x_4': 0.0, 'x_5': 90.0, 'x_6': 21.6,
-                's_1': 360.0, 's_2': 0.0, 's_3': 360.0, 's_4': 0.0, 's_5': 170.0, 's_6': 0.0, 's_7': 16.0,
-                's_8': 0.0, 's_9': 0.0, 's_10': 128.4, 's_11': 0.0,
-                'z': 6505.252422233556}
+    result = distribute_load(config)
+    assert result == expected
 
-    load, plants = prepare_input(config)
-    plant_list = [p for p in plants.values() if p.pmax > 0]
 
-    c = [p.cost for p in plant_list]
+def test_payload2():
+    config = {
+        "load": 480,
+        "fuels":
+        {
+            "gas(euro/MWh)": 13.4,
+            "kerosine(euro/MWh)": 50.8,
+            "co2(euro/ton)": 20,
+            "wind(%)": 0
+        },
+        "powerplants": [
+            {
+            "name": "gasfiredbig1",
+            "type": "gasfired",
+            "efficiency": 0.53,
+            "pmin": 100,
+            "pmax": 460
+            },
+            {
+            "name": "gasfiredbig2",
+            "type": "gasfired",
+            "efficiency": 0.53,
+            "pmin": 100,
+            "pmax": 460
+            },
+            {
+            "name": "gasfiredsomewhatsmaller",
+            "type": "gasfired",
+            "efficiency": 0.37,
+            "pmin": 40,
+            "pmax": 210
+            },
+            {
+            "name": "tj1",
+            "type": "turbojet",
+            "efficiency": 0.3,
+            "pmin": 0,
+            "pmax": 16
+            },
+            {
+            "name": "windpark1",
+            "type": "windturbine",
+            "efficiency": 1,
+            "pmin": 0,
+            "pmax": 150
+            },
+            {
+            "name": "windpark2",
+            "type": "windturbine",
+            "efficiency": 1,
+            "pmin": 0,
+            "pmax": 36
+            }
+        ]
+    }
+    expected = [
+        {"name": "gasfiredbig1", "p": 340.0},
+        {"name": "gasfiredbig2", "p": 100.0},
+        {"name": "gasfiredsomewhatsmaller", "p": 40.0},
+        {"name": "tj1", "p": 0.0},
+        {"name": "windpark1", "p": 0.0},
+        {"name": "windpark2", "p": 0.0}
+    ]
+    result = distribute_load(config)
+    assert result == expected
 
-    constraints = []
-    b = []
-    templ = [0 for _ in plant_list]
-    for i, p in enumerate(plant_list):
-        # p_i <= pmax_i
-        row = templ[:]
-        row[i] = 1
-        constraints.append(row)
-        b.append(p.pmax)
-        # p_i >= pmin_i
-        if p.pmin > 0:
-            row = templ[:]
-            row[i] = 1
-            constraints.append(row)
-            b.append(-p.pmin)  # indicate ">=" with "-"
 
-    # make the Sum(p_i) = load 2 inequalities
-    constraints.append([1 for _ in plant_list])
-    b.append(load)
-    constraints.append([1 for _ in plant_list])
-    b.append(-load)
-
-    solution = simplex(c, constraints, b)
-    print(solution)
-    assert solution == expected
+def test_payload3():
+    config = {
+        "load": 910,
+        "fuels":
+        {
+            "gas(euro/MWh)": 13.4,
+            "kerosine(euro/MWh)": 50.8,
+            "co2(euro/ton)": 20,
+            "wind(%)": 60
+        },
+        "powerplants": [
+            {
+            "name": "gasfiredbig1",
+            "type": "gasfired",
+            "efficiency": 0.53,
+            "pmin": 100,
+            "pmax": 460
+            },
+            {
+            "name": "gasfiredbig2",
+            "type": "gasfired",
+            "efficiency": 0.53,
+            "pmin": 100,
+            "pmax": 460
+            },
+            {
+            "name": "gasfiredsomewhatsmaller",
+            "type": "gasfired",
+            "efficiency": 0.37,
+            "pmin": 40,
+            "pmax": 210
+            },
+            {
+            "name": "tj1",
+            "type": "turbojet",
+            "efficiency": 0.3,
+            "pmin": 0,
+            "pmax": 16
+            },
+            {
+            "name": "windpark1",
+            "type": "windturbine",
+            "efficiency": 1,
+            "pmin": 0,
+            "pmax": 150
+            },
+            {
+            "name": "windpark2",
+            "type": "windturbine",
+            "efficiency": 1,
+            "pmin": 0,
+            "pmax": 36
+            }
+        ]
+    }
+    expected = [
+        {"name": "gasfiredbig1", "p": 460.0},
+        {"name": "gasfiredbig2", "p": 298.4},
+        {"name": "gasfiredsomewhatsmaller", "p": 40.0},
+        {"name": "tj1", "p": 0.0},
+        {"name": "windpark1", "p": 90.0},
+        {"name": "windpark2", "p": 21.6}
+    ]
+    result = distribute_load(config)
+    assert result == expected

@@ -7,6 +7,10 @@ from .util import Plant
 logger = logging.getLogger(__name__)
 
 
+class EmptyFeasibleRegionError(Exception):
+    pass
+
+
 def distribute_load(config):
     load, plants = prepare_input(config)
     logger.debug('distribute_load: load=%s', load)
@@ -46,14 +50,15 @@ def allocate_load(load, plants):
             constraints.append(row)
             b.append(-p.pmin)  # indicate ">=" with "-"
 
-    # # make the Sum(p_i) = load 2 inequalities
-    # constraints.append([1 for _ in plant_list])
-    # b.append(load)
-    # constraints.append([1 for _ in plant_list])
-    # b.append(-load)
+    # make the Sum(p_i) = load 2 inequalities
+    constraints.append([1 for _ in plant_list])
+    b.append(load)
+    constraints.append([1 for _ in plant_list])
+    b.append(-load)
 
     solution = simplex(c, constraints, b)
-    load_plan = {name: solution[f'x_{i+1}'] for i, name in enumerate(plants)}
+    load_plan = {name: solution.get(f'x_{i+1}', 0.0) for i, name in enumerate(plants)}
+
     return load_plan
 
 
@@ -85,50 +90,48 @@ def simplex(c, A, b, minimize=True):
     solution = inner_simplex(T, B, n)
     if not minimize:
         solution['z'] = -solution['z']
+    print(f'{solution=}')
     return solution
 
 
 def initialize_tableau(a, b, c, B, m, n, minimize):
     T = []
     # Choose a starting basic feasible solution with basis B
-    diagonal = [row[n + i] for i, row in enumerate(a)]
-    if not all(e == 1 for e in diagonal):
+    # diagonal = [row[n + i] for i, row in enumerate(a)]
+    diag = diagonal(a, B)
+    print(f'{diag=}')
+    if not all(e == 1 for e in diag):
         # for the diagonal values not equal to 1 we add artificial variables
-        art_var_cnt = sum(1 for e in diagonal if e != 1)
+        art_var_cnt = sum(1 for e in diag if e != 1)
         print(f'{art_var_cnt=}')
+        art_vars = list(range(len(a[0]), len(a[0]) + art_var_cnt, 1))
+        print(f'{art_vars=}')
+        B_art = []
         v_i = 0
         for i, row in enumerate(a):
             v = [0 for _ in range(art_var_cnt)]
-            if diagonal[i] != 1:
+            if diag[i] == 1:
+                # no need for an artificial variable, just use this slack variable
+                B_art.append(n + i)
+            else:
                 # add an artificial variable
                 v[v_i] = 1
+                B_art.append(art_vars[v_i])
                 v_i += 1
             b_i = b[i]
             if b_i < 0:
                 b_i = -b_i
             T.append(row[:] + v + [b_i])
-        # now the (z_0 - c_i) coefficients (z_0 == 0??)
-        if minimize:
-            T.append([0 for _ in range(m + n)] + [-1 for _ in range(art_var_cnt)] + [0])
-        else:
-            T.append([0 for _ in range(m + n)] + [1 for _ in range(art_var_cnt)] + [0])
-
-        B_art = []
-        art_v_idx = 0
-        for i, e in enumerate(diagonal):
-            if e == 1:
-                B_art.append(n + i)
-            else:
-                B_art.append(m + n + art_v_idx)
-                art_v_idx += 1
-                # add this row to the last row to eliminate the coefficients from Z
-                drow = T[i]
-                if minimize:
-                    for j, value in enumerate(T[-1]):
-                        T[-1][j] = value + drow[j]
-                else:
-                    for j, value in enumerate(T[-1]):
-                        T[-1][j] = value - drow[j]
+        # now the (z_0 - c_i) coefficients
+        # TODO: check for maximizing problems!
+        T.append([0 for _ in range(m + n)] + [-1 for _ in range(art_var_cnt)] + [0])
+        # make the (z_j - c_j) coefficients 0 for the artificial variables
+        # easily done by adding the row corresponding to the var to the last row
+        for av_i in art_vars:
+            # find the row in T:
+            i = B_art.index(av_i)
+            # TODO: check for maximizing problems!
+            add_rows(T, i, -1)
 
         try:
             solution = inner_simplex(T, B_art, n + m)
@@ -138,23 +141,41 @@ def initialize_tableau(a, b, c, B, m, n, minimize):
         print(f'   {B_art=}')
         # Assert that the artificial variables have been reduced to 0
         if not all(v == 0 for varname, v in solution.items() if varname[0] == 's'):
-            raise Exception('No initial feasible solution found, problem set is empty')
+            raise EmptyFeasibleRegionError('No initial feasible solution found, problem set is empty')
 
-        # discart everyting "artificial"]
-        for i in range(len(T)):
-            art_row = T[i]
-            row = art_row[:m + n] + [art_row[-1]]
-            T[i] = row
+        # if any of the artificial variables remain in the basis, try to move them out
+        remaining_art_vars = [(i, vi) for i, vi in enumerate(B_art) if vi in art_vars]
+        if remaining_art_vars:
+            # if row(v) corresponds to the row of artificial var v in the basis:
+            # - we look for a nonzero element corresponding to a nonbasic legitimate variable
+            # - on this element we do a pivot.
+            candidate_vars = sorted(set(range(m + n)) - set(B_art) - set(art_vars))
+            remove_rows = []
+            for leave_i, vi in remaining_art_vars:
+                row = T[leave_i]
+                for enter_j in candidate_vars:
+                    if row[enter_j] != 0:
+                        pivot(T, B_art, leave_i, enter_j)
+                        break
+                else:
+                    # if they're all 0 this row is "algebraically redundant"
+                    # remove it from the problem
+                    remove_rows.append(leave_i)
+            for i in sorted(remove_rows, reverse=True):
+                T.pop(i)
+                B_art.pop(i)
+
+        # now we can discart everyting "artificial"
+        # - the variables
+        for j in reversed(art_vars):
+            remove_column(T, j)
+        # - replace the objective function with the original
         T.pop(-1)
-
-        # now the (z_0 - c_i) coefficients of the original problem
         if minimize:
             T.append([-e for e in c] + [0 for _ in range(m)] + [0])
         else:
             T.append([e for e in c] + [0 for _ in range(m)] + [0])
-
         # finally, eliminate the z coefficients for the non slack variables
-        # TODO: try to understand why??
         for i, var_i in enumerate(B_art):
             if var_i < n:
                 assert T[i][var_i] == 1
@@ -201,8 +222,6 @@ def inner_simplex(T, B, n):
             print(f'{leave_i=}')
             print(f'{enter_j=}')
             pivot(T, B, leave_i, enter_j)
-            # Keep track of the basic variables
-            B[leave_i] = enter_j
             dump_t(T, B)
             iteration += 1
 
@@ -218,6 +237,23 @@ def inner_simplex(T, B, n):
     solution['z'] = T[-1][-1]
 
     return solution
+
+
+def diagonal(T, B):
+    """The diagonal of the current basis in tableau T.
+
+    T: the tableau
+    B: the indices of the basis
+    """
+    # return [row[B[i]] for i, row in enumerate(T[:-1])]
+    return [T[i][j] for i, j in enumerate(B)]
+
+
+def remove_column(T, j):
+    """Remove column j from matrix T
+    """
+    for row in T:
+        row.pop(j)
 
 
 def is_identity(A, n):
@@ -251,6 +287,18 @@ def pivot(T, B, leave_i, enter_j):
         factor = row[enter_j]
         for j, value in enumerate(row):
             row[j] = value - factor * leaving_row[j]
+
+    # Keep track of the basic variables
+    B[leave_i] = enter_j
+
+
+def add_rows(T, i1, i2, factor=1):
+    """In matrix T do "T[i2] = T[i2] + factor*T[i1]"
+    """
+    row_i1 = T[i1]
+    row_i2 = T[i2]
+    for j, value in enumerate(row_i1):
+        row_i2[j] += factor * value
 
 
 def determine_leaving_variable(T, enter_j):
@@ -286,6 +334,6 @@ def dump_t(T, B):
     fmt = ''.join(['{:', str(l), '.2f}'])
     print('Tableau:')
     for i, row in enumerate(T[:-1]):
-        print(B[i], '|', ' '.join([fmt.format(e) for e in row[:-1]]), '|', fmt.format(row[-1]))
-    print('z', '|', ' '.join([fmt.format(e) for e in T[-1][:-1]]), '|', fmt.format(T[-1][-1]))
+        print(f'{B[i]: >2d}', '|', ' '.join([fmt.format(e) for e in row[:-1]]), '|', fmt.format(row[-1]))
+    print(' z', '|', ' '.join([fmt.format(e) for e in T[-1][:-1]]), '|', fmt.format(T[-1][-1]))
     print('')

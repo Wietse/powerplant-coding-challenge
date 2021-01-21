@@ -105,6 +105,5 @@ My first stab was a naive algorithm that you can find in [naive.py](src/pcc/naiv
 
 After some research I got my hands on the book "Linear programming and network flows", by Mokhtar S. Bazaraa, John J.
 Jarvis, Hanif D. 
-From then on I tried implementing the simplex algorithm, which you can find in [simplex.py](src/pcc/simplex.py). I'm now
-able to calculate an optimal solution for many of the simpler examples and exercises. But modeling the actual problem of
-this challenge is still... a challenge.
+From then on I tried implementing the simplex algorithm, which you can find in [simplex.py](src/pcc/simplex.py). It's
+working for the payload examples given and being used when calling the endpoint.

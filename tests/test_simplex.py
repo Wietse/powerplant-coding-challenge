@@ -17,10 +17,10 @@ def test1():
          [ 1, 1, -1],
          [-1, 1,  1]]
     b = [9, 2, 4]
-    expected = {'x_1': 0.3333333333333333, 'x_2': 0.0, 'x_3': 4.333333333333333,
+    expected = {'x_1': 0.3, 'x_2': 0.0, 'x_3': 4.3,
                 's_1': 0.0, 's_2': 6.0, 's_3': 0.0,
                 'z': -17.0}
-    solution = simplex(c, A, b)
+    solution = simplex(c, (A, b))
     print(solution)
     assert solution == expected
 
@@ -38,10 +38,10 @@ def test2():
          [1, 1],
          [2, 5]]
     b = [11, 27, 90]
-    expected = {'x_1': 14.999999999999998, 'x_2': 12.0,
-                's_1': 13.999999999999998, 's_2': 0.0, 's_3': 0.0,
-                'z': 132}
-    solution = simplex(c, A, b, minimize=False)
+    expected = {'x_1': 15.0, 'x_2': 12.0,
+                's_1': 14.0, 's_2': 0.0, 's_3': 0.0,
+                'z': 132.0}
+    solution = simplex(c, (A, b), minimize=False)
     print(solution)
     assert solution == expected
 
@@ -62,7 +62,7 @@ def test3():
     expected = {'x_1': 3.0, 'x_2': 3.0,
                 's_1': 0.0, 's_2': 0.0, 's_3': 0.0,
                 'z': 21.0}
-    solution = simplex(c, A, b, minimize=False)
+    solution = simplex(c, (A, b), minimize=False)
     print(solution)
     assert solution == expected
 
@@ -83,7 +83,7 @@ def test4():
     expected = {'x_1': 5.0, 'x_2': 0.0, 'x_3': 2.5,
                 's_1': 0.0, 's_2': 20.0, 's_3': 0.0,
                 'z': 15.0}
-    solution = simplex(c, A, b, minimize=False)
+    solution = simplex(c, (A, b), minimize=False)
     print(solution)
     assert solution == expected
 
@@ -106,7 +106,7 @@ def test5():
     expected = {'x_1': 0.0, 'x_2': 3.0,
                 's_1': 1.0, 's_2': 2.0, 's_3': 0.0,
                 'z': -6.0}
-    solution = simplex(c, A, b)
+    solution = simplex(c, (A, b))
     print(solution)
     assert solution == expected
 
@@ -125,9 +125,9 @@ def test6():
          [1, 4, 3]]
     b = [14, -4, -6]
     expected = {'x_1': 0.0, 'x_2': 0.0, 'x_3': 2.0,
-                's_1': 6.000000000000001, 's_2': 5.999999999999999, 's_3': 0.0,
+                's_1': 6.0, 's_2': 6.0, 's_3': 0.0,
                 'z': 2.0}
-    solution = simplex(c, A, b)
+    solution = simplex(c, (A, b))
     print(solution)
     assert solution == expected
 
@@ -146,34 +146,41 @@ def test7():
          [2, 3]]
     b = [4, -18]
     try:
-        simplex(c, A, b)
+        simplex(c, (A, b))
     except EmptyFeasibleRegionError:
         pass
     else:
         assert False, 'No exception raised'
 
 
-# def test7():
-#     """
-#     After phase I there is a redundant row in the basis for an artificial variable.
-#
-#     Minimize z = -x1 + 2x2 - 3x3
-#     s.t.:
-#          x1 + x2 +  x3 =   6
-#         -x1 + x2 + 2x3 =   4
-#              2x2 + 3x3 =  10
-#                     x3 <=  2
-#     """
-#     c = [-3, 4]
-#     A = [[1, 1],
-#          [2, 3]]
-#     b = [4, -18]
-#     try:
-#         simplex(c, A, b)
-#     except EmptyFeasibleRegionError:
-#         pass
-#     else:
-#         assert False, 'No exception raised'
+def test8():
+    """
+    After phase I there is a redundant row in the basis for an artificial variable.
+
+    Minimize z = -x1 + 2x2 - 3x3
+    s.t.:
+         x1 + x2 +  x3 =   6
+        -x1 + x2 + 2x3 =   4
+             2x2 + 3x3 =  10
+                    x3 <=  2
+    """
+    c = [-1, 2, -3]
+    E = (
+        [[1, 1, 1],
+         [-1, 1, 2],
+         [0, 2, 3]],
+        [6, 4, 10]
+    )
+    A =(
+        [[0, 0, 1]],
+        [2]
+    )
+    expected = {'x_1': 2.0, 'x_2': 2.0, 'x_3': 2.0,
+                's_1': 0.0, 's_2': 0.0, 's_3': 0.0, 's_4': 0.0,
+                'z': -4.0}
+    solution = simplex(c, A, E)
+    print(solution)
+    assert solution == expected
 
 
 def test_small():
@@ -203,13 +210,9 @@ def test_small():
             },
         ]
     }
-    expected = [
-        {"name": "gasfiredbig1", "p": 368.4},
-        {"name": "gasfiredsomewhatsmaller", "p": 0.0},
-    ]
-    expected = {'x_1': 100.0, 'x_2': 100.0,
-                's_1': 360.0, 's_2': 0.0, 's_3': 360.0, 's_4': 0.0, 's_5': 170.0, 's_6': 0.0,
-                'z': 0}
+    expected = {'x_1': 240.0, 'x_2': 40.0,
+                's_1': 220.0, 's_2': 140.0, 's_3': 170.0, 's_4': 0.0, 's_5': 0.0, 's_6': 0.0,
+                'z': 7516.6}
 
     load, plants = prepare_input(config)
     plant_list = [p for p in plants.values() if p.pmax > 0]
@@ -238,7 +241,7 @@ def test_small():
     constraints.append([1 for _ in plant_list])
     b.append(-load)
 
-    solution = simplex(c, constraints, b)
+    solution = simplex(c, (constraints, b))
     print(solution)
     assert solution == expected
 
@@ -433,8 +436,8 @@ def test_payload3():
         ]
     }
     expected = [
-        {"name": "gasfiredbig1", "p": 460.0},
-        {"name": "gasfiredbig2", "p": 298.4},
+        {"name": "gasfiredbig1", "p": 298.4},
+        {"name": "gasfiredbig2", "p": 460.0},
         {"name": "gasfiredsomewhatsmaller", "p": 40.0},
         {"name": "tj1", "p": 0.0},
         {"name": "windpark1", "p": 90.0},

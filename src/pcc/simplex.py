@@ -50,38 +50,49 @@ def allocate_load(load, plants):
             constraints.append(row)
             b.append(-p.pmin)  # indicate ">=" with "-"
 
-    # make the Sum(p_i) = load 2 inequalities
-    constraints.append([1 for _ in plant_list])
-    b.append(load)
-    constraints.append([1 for _ in plant_list])
-    b.append(-load)
+    # equality Sum(p_i) = load
+    equalities = [[1 for _ in plant_list]]
+    e = [load]
 
-    solution = simplex(c, constraints, b)
+    solution = simplex(c, (constraints, b), (equalities, e))
     load_plan = {name: solution.get(f'x_{i+1}', 0.0) for i, name in enumerate(plants)}
 
     return load_plan
 
 
-def simplex(c, A, b, minimize=True):
+def simplex(c, A, E=None, minimize=True):
     """
     c are the coefficients of the objective function
-    A is m x n matrix of rank m
-    b is the RHS of the inequalities represented by A
-      b > 0 BUT:
-      convention: if b_i < 0 it means sum(a_ij, j: 0 -> n) >= b_i (i.e. a "greater than").
+    A a tuple (AM = m x n matrix of rank m, AB = the RHS vector)
+        EB > 0 BUT:
+        convention: if b_i < 0 it means sum(a_ij, j: 0 -> n) >= b_i (i.e. a "greater than").
+    E a tuple (EM = p x n matrix representing equalities, EB = the RHS vector)
     """
-    # Convert to equalities by introducing slack variables:
-    m = len(A)
+    EM, EB = E if E is not None else ([], [])
+    AM, AB = A
+    an = len(AM)  # #slack variables
+    en = len(EM)  # #equalities
+    m = an + en
     n = len(c)
     # Basic variables
-    B = list(range(n, n + m, 1))
+    basic_start = max(n - en, 0)
+    basic_end = basic_start + m
+    B = list(range(basic_start, basic_end, 1))
     print(f'{B=}')
+    b = []
 
-    a = []
-    for i, row in enumerate(A):
-        s = -1 if b[i] < 0 else 1
-        a_i = row[:] + [0 if j != i else s for j in range(m)]
-        a.append(a_i)
+    # Construct the main matrix
+    templ = [0 for _ in range(m)]
+    # Add the equalities
+    a = [row[:] + templ[:] for row in EM]
+    b = EB[:]
+    # Convert inequalities to equalities by introducing slack variables:
+    for i, row in enumerate(AM):
+        sign = -1 if AB[i] < 0 else 1
+        slack_coeffs = templ[:]
+        slack_coeffs[i] = sign
+        a.append(row[:] + slack_coeffs)
+        b.append(sign * AB[i])
 
     print('Phase 1')
     B, T = initialize_tableau(a, b, c, B, m, n, minimize)
@@ -97,12 +108,11 @@ def simplex(c, A, b, minimize=True):
 def initialize_tableau(a, b, c, B, m, n, minimize):
     T = []
     # Choose a starting basic feasible solution with basis B
-    # diagonal = [row[n + i] for i, row in enumerate(a)]
-    diag = diagonal(a, B)
-    print(f'{diag=}')
-    if not all(e == 1 for e in diag):
-        # for the diagonal values not equal to 1 we add artificial variables
-        art_var_cnt = sum(1 for e in diag if e != 1)
+    is_identity, column_checks = check_identity_matrix(a, B)
+    # if not all(e == 1 for e in diag):
+    if not is_identity:
+        # we replace the non conforming basic variables with artificial variables
+        art_var_cnt = sum(1 for e in column_checks if e != 1)
         print(f'{art_var_cnt=}')
         art_vars = list(range(len(a[0]), len(a[0]) + art_var_cnt, 1))
         print(f'{art_vars=}')
@@ -110,8 +120,8 @@ def initialize_tableau(a, b, c, B, m, n, minimize):
         v_i = 0
         for i, row in enumerate(a):
             v = [0 for _ in range(art_var_cnt)]
-            if diag[i] == 1:
-                # no need for an artificial variable, just use this slack variable
+            if column_checks[i]:
+                # no need for an artificial variable
                 B_art.append(n + i)
             else:
                 # add an artificial variable
@@ -194,7 +204,7 @@ def initialize_tableau(a, b, c, B, m, n, minimize):
                 b_i = -b_i
             T.append(row[:] + [b_i])
 
-        # now the (z_0 - c_i) coefficients (z_0 == 0??)
+        # now the (z_0 - c_i) coefficients
         if minimize:
             T.append([-e for e in c] + [0 for _ in range(m)] + [0])
         else:
@@ -233,20 +243,21 @@ def inner_simplex(T, B, n):
             variable = f'x_{i+1}'
         else:
             variable = f's_{i-n+1}'
-        solution[variable] = result.get(i, 0.0)
-    solution['z'] = T[-1][-1]
+        solution[variable] = round(result.get(i, 0.0), 1)
+    solution['z'] = round(T[-1][-1], 1)
 
     return solution
 
 
-def diagonal(T, B):
-    """The diagonal of the current basis in tableau T.
-
-    T: the tableau
-    B: the indices of the basis
-    """
-    # return [row[B[i]] for i, row in enumerate(T[:-1])]
-    return [T[i][j] for i, j in enumerate(B)]
+def check_identity_matrix(T, B):
+    column_checks = []
+    for i, j in enumerate(B):
+        column = [row[j] for row in T]
+        if column[i] == 1 and all(e == 0 for i, e in enumerate(column) if i != j):
+            column_checks.append(True)
+        else:
+            column_checks.append(False)
+    return all(column_checks), column_checks
 
 
 def remove_column(T, j):
@@ -254,20 +265,6 @@ def remove_column(T, j):
     """
     for row in T:
         row.pop(j)
-
-
-def is_identity(A, n):
-    # we know A_n is diagonal, just check the diagonal elements
-    for i, row in enumerate(A):
-        if row[n + i] != 1:
-            return False
-        # for j, e in enumerate(row[n:-1]):
-        #     if j == i:
-        #         if e != 1:
-        #             return False
-        #     elif e != 0:
-        #         return False
-    return True
 
 
 def pivot(T, B, leave_i, enter_j):

@@ -135,7 +135,11 @@ def initialize_tableau(a, b, c, B, m, n, minimize):
         # now the (z_0 - c_i) coefficients
         # TODO: check for maximizing problems!
         T.append([0 for _ in range(m + n)] + [-1 for _ in range(art_var_cnt)] + [0])
-        # make the (z_j - c_j) coefficients 0 for the artificial variables
+        # finally, we need to transform the system to its canonical form:
+        # i.e. we need unit vectors for all basic variables. Since we just constructed
+        # a basis for the constraint equations that is the identity matrix, we only need
+        # to make the (z_j - c_j) coefficients 0 for the artificial variables (since in the
+        # objective function "z" is the basic variable)
         # easily done by adding the row corresponding to the var to the last row
         for av_i in art_vars:
             # find the row in T:
@@ -185,12 +189,13 @@ def initialize_tableau(a, b, c, B, m, n, minimize):
             T.append([-e for e in c] + [0 for _ in range(m)] + [0])
         else:
             T.append([e for e in c] + [0 for _ in range(m)] + [0])
-        # finally, eliminate the z coefficients for the non slack variables
+        # finally, again, we need to transform the system to its canonical form:
+        # i.e. we need unit vectors for all basic variables.
         for i, var_i in enumerate(B_art):
-            if var_i < n:
-                assert T[i][var_i] == 1
-                row = T[i]
-                factor = -T[-1][var_i]
+            assert T[i][var_i] == 1
+            row = T[i]
+            factor = -T[-1][var_i]
+            if factor != 0:
                 for j, value in enumerate(row):
                     T[-1][j] += factor * value
 
